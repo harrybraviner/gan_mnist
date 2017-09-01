@@ -36,10 +36,13 @@ class TotallyConnectedLayer:
     def connect(self, input_tensor):
         return (tf.nn.relu(tf.matmul(input_tensor, self.W) + self.b))
 
+    def connect_sigmoid(self, input_tensor):
+        return (tf.nn.sigmoid(tf.matmul(input_tensor, self.W) + self.b))
+
 class GAN:
 
 
-    def __init__(self, fraction_to_use = 0.01):
+    def __init__(self, fraction_to_use = 1.0):
 
         self.batch_size = 32
         initial_weight_noise = 0.02
@@ -63,8 +66,8 @@ class GAN:
         self.gnet_fc_h1 = self.gnet_fc_layer1.connect(self.gnet_z)
         self.gnet_fc_layer2 = TotallyConnectedLayer(input_width = self.gnet_fc_h1.shape.dims[1].value, output_width = gnet_fc2_width)
         self.gnet_fc_h2 = self.gnet_fc_layer2.connect(self.gnet_fc_h1)
-        self.gnet_fc_layer3 = TotallyConnectedLayer(input_width = self.gnet_fc_h2.shape.dims[1].value, output_width = rows*cols)
-        self.gnet_output_flat = self.gnet_fc_layer3.connect(self.gnet_fc_h2)
+        self.gnet_fc_layer3 = TotallyConnectedLayer(input_width = self.gnet_fc_h2.shape.dims[1].value, output_width = rows*cols, bias = 0.0)
+        self.gnet_output_flat = self.gnet_fc_layer3.connect_sigmoid(self.gnet_fc_h2)
         self.gnet_output = tf.reshape(self.gnet_output_flat, shape = [self.batch_size, rows, cols, 1])
 
         # Genuine images
@@ -107,14 +110,16 @@ class GAN:
         self.dnet_fc_h1_g = self.dnet_fc_layer.connect(self.dnet_conv_h2_flat_g)
         self.dnet_y_hat_logits_g = tf.matmul(self.dnet_fc_h1_g, self.dnet_W_fc2) + self.dnet_b_fc2
 
-        self.dnet_cross_entropy_g = tf.losses.sigmoid_cross_entropy(multi_class_labels = tf.constant(1.0, shape = [self.batch_size, 1]), \
+        self.dnet_cross_entropy_g = tf.losses.sigmoid_cross_entropy(multi_class_labels = tf.constant(0.0, shape = [self.batch_size, 1]), \
                                                                     logits = self.dnet_y_hat_logits_g)
         
 
-        self.optimizer = tf.train.GradientDescentOptimizer(1e-4)
+        #self.optimizer = tf.train.GradientDescentOptimizer(1e-2)
+        self.optimizer = tf.train.AdamOptimizer(1e-5)
         self.d_variables = [self.dnet_conv_layer1.W, self.dnet_conv_layer1.b, self.dnet_conv_layer2.W, self.dnet_conv_layer2.b, \
                             self.dnet_fc_layer.W, self.dnet_fc_layer.b, self.dnet_W_fc2, self.dnet_b_fc2]
-        self.g_variables = [self.gnet_fc_layer1.W, self.gnet_fc_layer1.b, self.gnet_fc_layer2.W, self.gnet_fc_layer2.b]
+        self.g_variables = [self.gnet_fc_layer1.W, self.gnet_fc_layer1.b, self.gnet_fc_layer2.W, self.gnet_fc_layer2.b, \
+                            self.gnet_fc_layer3.W, self.gnet_fc_layer3.b]
         self.d_train = self.optimizer.minimize(self.dnet_cross_entropy, var_list = self.d_variables)
         self.g_train = self.optimizer.minimize(-1.0*self.dnet_cross_entropy_g, var_list = self.g_variables)
 
@@ -122,6 +127,7 @@ class GAN:
         self.sess.run(tf.global_variables_initializer())
 
         self.total_training_time = 0.0
+        self.total_evaluating_time = 0.0
         self.discriminator_training_time = 0.0
         self.generator_training_time = 0.0
         self.examples_discriminator_trained_on = 0
@@ -132,11 +138,13 @@ class GAN:
         self.time_generator_trained_history = []
         self.accuracy_on_genuine_history = []
         self.accuracy_on_generated_history = []
+        self.cross_entropy_history = []
 
     def train_discriminator(self):
         start_time = time.time()
         training_batch = self.training_data.getNextTrainingBatch(self.batch_size)[0]
-        generator_noise = np.random.rand(self.batch_size, self.gnet_z_width)
+        generator_noise = np.reshape(np.random.normal(size=self.batch_size*self.gnet_z_width), \
+                                     newshape = [self.batch_size, self.gnet_z_width])
         self.d_train.run(feed_dict = {self.x_images : training_batch, self.gnet_z : generator_noise})
         end_time = time.time()
         self.total_training_time += (end_time - start_time)
@@ -145,30 +153,56 @@ class GAN:
 
     def train_generator(self):
         start_time = time.time()
-        generator_noise = np.random.rand(self.batch_size, self.gnet_z_width)
+        generator_noise = np.reshape(np.random.normal(size=self.batch_size*self.gnet_z_width), \
+                                     newshape = [self.batch_size, self.gnet_z_width])
         self.g_train.run(feed_dict = {self.gnet_z : generator_noise})
         end_time = time.time()
         self.total_training_time += (end_time - start_time)
         self.generator_training_time += (end_time - start_time)
         self.examples_generator_trained_on += self.batch_size
 
-    def evaluate_performance(self):
+    def train_discriminator_for_one_epoch(self):
+        num_batches = ceil(self.training_data.N_train / self.batch_size)
+        for i in range(num_batches):
+            self.train_discriminator()
+
+    def train_generator_for_one_epoch(self):
+        num_batches = ceil(self.training_data.N_train / self.batch_size)
+        for i in range(num_batches):
+            self.train_generator()
+
+    def estimate_performance(self, num_batches):
         start_time = time.time()
         
-        num_batches = ceil(self.training_data.N_validation / self.batch_size)
-
-        acc_genuine, acc_fake = 0.0, 0.0
+        acc_genuine, acc_fake, cross_entropy = 0.0, 0.0, 0.0
         for i in range(num_batches):
             validation_batch = self.training_data.getNextValidationBatch(self.batch_size)[0]
-            generator_noise = np.random.rand(self.batch_size, self.gnet_z_width)
+            generator_noise = np.reshape(np.random.normal(size=self.batch_size*self.gnet_z_width), \
+                                         newshape = [self.batch_size, self.gnet_z_width])
             genuine_acc = self.dnet_accuracy_on_genuine.eval(feed_dict={self.x_images : validation_batch, self.gnet_z : generator_noise})
             fake_acc = self.dnet_accuracy_on_fake.eval(feed_dict={self.x_images : validation_batch, self.gnet_z : generator_noise})
+            cross_entropy += self.dnet_cross_entropy.eval(feed_dict={self.x_images : validation_batch, self.gnet_z : generator_noise})
             acc_genuine += genuine_acc
             acc_fake += fake_acc
         acc_genuine /= num_batches
         acc_fake /= num_batches
+        cross_entropy /= num_batches
 
         self.accuracy_on_genuine_history += [acc_genuine]
         self.accuracy_on_generated_history += [acc_fake]
+        self.cross_entropy_history += [cross_entropy]
         self.time_generator_trained_history += [self.generator_training_time]
         self.time_discriminator_trained_history += [self.discriminator_training_time]
+
+        end_time = time.time()
+        self.total_evaluating_time += (end_time - start_time)
+
+    def evaluate_performance(self):
+        num_batches = ceil(self.training_data.N_validation / self.batch_size)
+        self.estimate_performance(num_batches)
+
+    def generateSingleExample(self):
+        generator_noise = np.reshape(np.random.normal(size=self.batch_size*self.gnet_z_width), \
+                                     newshape = [self.batch_size, self.gnet_z_width])
+        gnet_output = self.gnet_output.eval(feed_dict = {self.gnet_z : generator_noise})
+        return(gnet_output[0])

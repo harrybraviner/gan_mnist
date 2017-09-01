@@ -109,7 +109,7 @@ class ImageAndLabelSet:
                 yield batch_size, image_batch, label_batch
 
 def getTrainingSet(fraction_to_use = 1.0):
-    return ImageAndLabelSet("../data/train-images-idx3-ubyte", "../data/train-labels-idx1-ubyte", 0.8, fraction_to_use)
+    return ImageAndLabelSet("../data/train-images-idx3-ubyte", "../data/train-labels-idx1-ubyte", 0.9, fraction_to_use)
 
 def getTestSet(fraction_to_use = 1.0):
     return ImageAndLabelSet("../data/t10k-images-idx3-ubyte", "../data/t10k-labels-idx1-ubyte", 1.0, fraction_to_use)
