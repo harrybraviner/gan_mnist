@@ -59,6 +59,8 @@ class ImageAndLabelSet:
         self.next_training_index = 1
         self.next_validation_index = self.N_train + 1
 
+        self.marginal_image = None
+
     def _getNextBatch(self, min_index, max_index, start_index, batchSize):
         next_index = start_index
         image_size = self.image_set.rows * self.image_set.cols
@@ -95,6 +97,16 @@ class ImageAndLabelSet:
                 next_index, image_batch, label_batch = self._getNextBatch(1, self.N_train, next_index, (self.N_train - next_index + 1))
                 done = True
                 yield batch_size, image_batch, label_batch
+
+    def getMarginalTrainingImage(self):
+        if self.marginal_image == None:
+            self.marginal_image = self.image_set.getImageAsFloatArray(1)
+            for i in range(2, self.N_train + 1):
+                self.marginal_image += self.image_set.getImageAsFloatArray(i)
+            self.marginal_image /= self.N_train
+            self.marginal_image = np.reshape(self.marginal_image, (self.image_set.rows, self.image_set.cols, 1))
+        return self.marginal_image
+            
 
     def getEntireValidationSetAsBatches(self, batch_size):
         next_index = self.N_train + 1
