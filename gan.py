@@ -110,7 +110,7 @@ class GAN:
         self.dnet_fc_h1_g = self.dnet_fc_layer.connect(self.dnet_conv_h2_flat_g)
         self.dnet_y_hat_logits_g = tf.matmul(self.dnet_fc_h1_g, self.dnet_W_fc2) + self.dnet_b_fc2
 
-        self.dnet_cross_entropy_g = tf.losses.sigmoid_cross_entropy(multi_class_labels = tf.constant(0.0, shape = [self.batch_size, 1]), \
+        self.dnet_cross_entropy_g = tf.losses.sigmoid_cross_entropy(multi_class_labels = tf.constant(1.0, shape = [self.batch_size, 1]), \
                                                                     logits = self.dnet_y_hat_logits_g)
         
 
@@ -121,7 +121,7 @@ class GAN:
         self.g_variables = [self.gnet_fc_layer1.W, self.gnet_fc_layer1.b, self.gnet_fc_layer2.W, self.gnet_fc_layer2.b, \
                             self.gnet_fc_layer3.W, self.gnet_fc_layer3.b]
         self.d_train = self.optimizer.minimize(self.dnet_cross_entropy, var_list = self.d_variables)
-        self.g_train = self.optimizer.minimize(-1.0*self.dnet_cross_entropy_g, var_list = self.g_variables)
+        self.g_train = self.optimizer.minimize(self.dnet_cross_entropy_g, var_list = self.g_variables)
 
         self.sess = tf.InteractiveSession()
         self.sess.run(tf.global_variables_initializer())
